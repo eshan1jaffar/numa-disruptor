@@ -147,6 +147,21 @@ class HarnessTest {
     }
 
     @Test
+    void oversubscribedSpinningWorkloadsAreSkippedEvenWhenUnpinned() {
+        final NumaTopology small = epyc.restrictedTo(CpuList.parse("0-7"));
+        final SimulatedCpuAffinity sim = new SimulatedCpuAffinity(small.allowedCpus());
+        final ExperimentConfig spin = cfg("variant", "V0", "locality", "OS", "partitions", "4", "wait", "BUSY_SPIN"); // 12 workers, 8 cpus
+        final Map<String, Object> r = ExperimentRunner.run(spin, 1, small, sim, Map.of());
+        assertEquals("skipped", r.get("status"));
+        assertTrue(String.valueOf(r.get("reason")).contains("oversubscription"), String.valueOf(r.get("reason")));
+        // a blocking wait strategy yields the CPU, so oversubscription is legitimate there (reaches the pipeline, not skipped for this reason)
+        final Map<String, Object> blocking = ExperimentRunner.run(
+            cfg("variant", "V0", "locality", "OS", "partitions", "4", "wait", "BLOCKING", "warmup", "0", "measure", "1", "ring", "1024"),
+            1, small, sim, Map.of());
+        assertEquals("ok", blocking.get("status"), String.valueOf(blocking.get("reason")));
+    }
+
+    @Test
     void resultsStoreAppendsDurablyAndResumeRetriesSkippedOnly(@TempDir final Path dir) throws Exception {
         final ResultsStore store = new ResultsStore(dir);
         final Map<String, Object> ok = new LinkedHashMap<>();

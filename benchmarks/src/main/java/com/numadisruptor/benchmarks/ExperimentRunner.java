@@ -94,7 +94,20 @@ final class ExperimentRunner {
             throw new SkipException("CPU pinning unsupported on this host");
         }
 
-        final PlacementFactory.Resolved placement = PlacementFactory.resolve(c, spec, topology, PlacementConstraints.defaults());
+        final int workers = c.partitions * (c.producersPerPartition + c.stages + c.consumersPerPartition);
+        final int allowed = topology.allowedCpus().cardinality();
+        final boolean spins = c.wait == com.numadisruptor.runtime.WaitStrategyKind.BUSY_SPIN || c.wait == com.numadisruptor.runtime.WaitStrategyKind.YIELDING;
+        if (spins && workers > allowed - 1) {
+            throw new SkipException("CPU oversubscription: " + workers + " spinning workers need more than the " + (allowed - 1)
+                + " CPUs available besides the driver CPU; results would measure the scheduler, not placement");
+        }
+        // the driver (main) thread gets its own CPU, so a pinned spinner is never preempted by it
+        final java.util.BitSet reserved = new java.util.BitSet();
+        if (c.variant != Variant.V0 && allowed > 1) {
+            reserved.set(topology.allowedCpus().previousSetBit(topology.allowedCpus().length()));
+        }
+        final PlacementConstraints constraints = new PlacementConstraints(true, reserved);
+        final PlacementFactory.Resolved placement = PlacementFactory.resolve(c, spec, topology, constraints);
         if (placement.skipReason() != null) {
             throw new SkipException(placement.skipReason());
         }
@@ -125,7 +138,14 @@ final class ExperimentRunner {
                     slabs[p] = new PayloadSlab(region, c.eventBytes, c.ringSize);
                 }
             }
-            return runPipeline(c, spec, topology, affinity, placement, slabs, offheapReport, totalProducers, limitPerProducer);
+            if (!reserved.isEmpty()) {
+                try {
+                    affinity.pinCurrentThread(reserved);
+                } catch (final RuntimeException e) {
+                    offheapReport.put("driverPinFailed", e.toString());
+                }
+            }
+            return runPipeline(c, spec, topology, affinity, placement, slabs, offheapReport, totalProducers, limitPerProducer, constraints);
         } finally {
             for (final NumaMemoryRegion region : regions) {
                 region.close();
@@ -136,7 +156,7 @@ final class ExperimentRunner {
     private static Map<String, Object> runPipeline(
         final ExperimentConfig c, final WorkloadSpec spec, final NumaTopology topology, final CpuAffinity affinity,
         final PlacementFactory.Resolved placement, final PayloadSlab[] slabs, final Map<String, Object> offheapReport,
-        final int totalProducers, final long limitPerProducer) throws Exception {
+        final int totalProducers, final long limitPerProducer, final PlacementConstraints constraints) throws Exception {
         final PlacementPlan plan = placement.plan();
         final RunControl ctl = new RunControl(limitPerProducer);
         final int probeCount = totalProducers + c.partitions + c.partitions * c.consumersPerPartition;
@@ -160,6 +180,7 @@ final class ExperimentRunner {
             .waitStrategy(c.wait)
             .trafficEstimate(spec.eventsPerSecondPerPartition(), c.eventBytes, 8)
             .ringInit(placement.ringInit())
+            .constraints(constraints)
             .consumers(c.consumersPerPartition, c.mode, (partition, index) -> {
                 final TradingWorkload.Gateway g = new TradingWorkload.Gateway(
                     c, partition, index, ctl, affinity, probes[totalProducers + c.partitions + partition * c.consumersPerPartition + index]);

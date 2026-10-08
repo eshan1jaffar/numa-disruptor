@@ -26,7 +26,7 @@ while IFS= read -r f; do
   ok=$((ok + $(grep -c '"status":"ok"' "$f" || true)))
   skipped=$((skipped + $(grep -c '"status":"skipped"' "$f" || true)))
   failed=$((failed + $(grep -c '"status":"failed"' "$f" || true)))
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
     python3 - "$f" <<'PY' || status=1
 import json, sys
 bad = 0

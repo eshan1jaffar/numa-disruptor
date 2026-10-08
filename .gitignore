@@ -3,9 +3,13 @@ build/
 .idea/
 *.iml
 out/
-results/
+# raw benchmark output stays local; curated example/real datasets live under results/examples or results/published
+results/*
+!results/examples/
+!results/published/
 *.log
 dist/
 .tools/
 analysis/__pycache__/
+analysis/out/
 analysis/figures/
