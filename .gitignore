@@ -1,0 +1,11 @@
+.gradle/
+build/
+.idea/
+*.iml
+out/
+results/
+*.log
+dist/
+.tools/
+analysis/__pycache__/
+analysis/figures/

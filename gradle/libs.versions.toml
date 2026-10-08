@@ -1,0 +1,14 @@
+[versions]
+disruptor = "4.0.0"
+junit = "5.11.4"
+jmh = "1.37"
+hdrhistogram = "2.2.2"
+
+[libraries]
+disruptor = { module = "com.lmax:disruptor", version.ref = "disruptor" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
+jmh-processor = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }
+hdrhistogram = { module = "org.hdrhistogram:HdrHistogram", version.ref = "hdrhistogram" }
