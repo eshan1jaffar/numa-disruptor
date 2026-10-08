@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  portable:
+    # Compiles everything and runs every test that needs no NUMA hardware (hardware-tagged tests are excluded by default).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Build and test (one command)
+        run: ./gradlew build --console=plain
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/**'
+
+  analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r analysis/requirements.txt
+      - run: python -m unittest analysis/test_plot_results.py
+
+  linux-native:
+    # Real sched_setaffinity / libnuma / sysfs on a hosted VM (normally a single NUMA node). Exercises the native bindings but
+    # cannot show multi-node behaviour. Not required: hosted runners may restrict mbind/affinity.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - run: sudo apt-get update && sudo apt-get install -y libnuma1
+      - run: ./gradlew test -PhardwareTests --console=plain
