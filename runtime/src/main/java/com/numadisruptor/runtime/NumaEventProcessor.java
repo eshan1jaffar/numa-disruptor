@@ -65,6 +65,7 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
     private final PlacementCostModel costModel;
     private final EventRouter router;
     private final Duration startTimeout;
+    private final RingInit ringInit;
 
     private volatile State state = State.NEW;
     private volatile boolean aborting;
@@ -97,6 +98,7 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
         this.costModel = b.costModel != null ? b.costModel : PlacementCostModel.fromTopology(topology);
         this.router = b.router;
         this.startTimeout = b.startTimeout;
+        this.ringInit = b.ringInit;
     }
 
     public static <E> Builder<E> builder() {
@@ -180,8 +182,10 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
                     } else {
                         cpus.add(plan.cpuOf(VertexIds.forwarder(p, r)));
                     }
-                    constructOn = new BitSet();
-                    topology.allowedCpusOnNode(plan.nodeOf(VertexIds.ring(p, r))).forEach(constructOn::set);
+                    if (ringInit == RingInit.ON_PLANNED_NODE) {
+                        constructOn = new BitSet();
+                        topology.allowedCpusOnNode(plan.nodeOf(VertexIds.ring(p, r))).forEach(constructOn::set);
+                    }
                 }
                 final NumaDisruptorFactory.Ring<E> ring = NumaDisruptorFactory.create(
                     String.format("p%d-r%d", p, r), eventFactory, spec.ringBufferSize(), type, waitKind.create(),
@@ -461,6 +465,7 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
         private PlacementCostModel costModel;
         private EventRouter router = EventRouter.hashing();
         private Duration startTimeout = Duration.ofSeconds(10);
+        private RingInit ringInit = RingInit.ON_PLANNED_NODE;
 
         public Builder<E> eventFactory(final EventFactory<E> f) { this.eventFactory = f; return this; }
 
@@ -518,6 +523,9 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
         }
 
         public Builder<E> startTimeout(final Duration d) { this.startTimeout = d; return this; }
+
+        /** Where ring memory is first touched; see {@link RingInit}. */
+        public Builder<E> ringInit(final RingInit mode) { this.ringInit = mode; return this; }
 
         public NumaEventProcessor<E> build() {
             return new NumaEventProcessor<>(this);
