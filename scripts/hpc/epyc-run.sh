@@ -4,12 +4,10 @@
 #
 #   epyc-run.sh stage    login node OK (network needed): JDK + clone + build only, nothing heavy runs. Do this first if compute
 #                        nodes have no internet.
-#   epyc-run.sh run      INSIDE an allocation (salloc/sbatch): stage if needed, environment check, smoke gate, then the matrix.
+#   epyc-run.sh run      INSIDE your allocation (you request nodes/CPUs yourself; this script never does): stage if needed, environment check, smoke gate, then the matrix.
 #                        This is the default when SLURM_JOB_ID is set.
-#   epyc-run.sh submit   from the login node: sbatch this script as a 1 h job (SBATCH_ARGS="-p <partition> -A <account>").
 #
-# Typical interactive session:
-#   salloc -N1 -c64 -t 1:00:00 -p <partition> -A <account>      # then, on the compute node:
+# Typical interactive session (after you have requested your allocation and are on the compute node):
 #   GH_TOKEN=<token> bash epyc-run.sh
 #
 # Environment (all optional):
@@ -114,7 +112,7 @@ stage() {
 
 run() {
   if [[ -z "${SLURM_JOB_ID:-}" ]]; then
-    die "not inside a Slurm allocation. Benchmarks must not run on a login node. Use:  salloc -N1 -c64 -t 1:00:00 -p <partition> -A <account>  then rerun this, or:  $0 submit"
+    die "not inside a Slurm allocation. Benchmarks must not run on a login node. Use:  salloc -N1 -c64 -t 1:00:00 -p <partition> -A <account>  then rerun this"
   fi
   stage
   local commit tarball
@@ -129,19 +127,9 @@ run() {
   exec bash "$SRC_DIR/scripts/hpc/benchmark.slurm"
 }
 
-submit() {
-  command -v sbatch >/dev/null 2>&1 || die "sbatch not found: run this on the cluster's login node"
-  mkdir -p "$WORK_DIR"
-  local self; self="$(readlink -f "$0")"
-  # shellcheck disable=SC2086
-  sbatch --job-name=numa-epyc --nodes=1 --ntasks=1 --cpus-per-task="${SBATCH_CPUS:-64}" --time=01:00:00 \
-    --output="$WORK_DIR/slurm-%j.out" ${SBATCH_ARGS:-} --export=ALL "$self" run
-}
-
 case "${1:-auto}" in
   stage) stage ;;
   run) run ;;
-  submit) submit ;;
-  auto) if [[ -n "${SLURM_JOB_ID:-}" ]]; then run; else die "usage: $0 stage|run|submit  (run needs a Slurm allocation; see the header)"; fi ;;
-  *) die "usage: $0 stage|run|submit" ;;
+  auto) if [[ -n "${SLURM_JOB_ID:-}" ]]; then run; else die "usage: $0 stage|run  (run needs a Slurm allocation; see the header)"; fi ;;
+  *) die "usage: $0 stage|run" ;;
 esac

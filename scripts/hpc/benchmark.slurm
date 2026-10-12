@@ -110,7 +110,10 @@ SMOKE_OUT="$RESULTS_DIR/smoke" run_fg "$HERE/smoke-test.sh" || { echo "smoke tes
 elapsed=$(( $(date +%s) - START ))
 export BUDGET_SECONDS=$(( BUDGET_SECONDS - elapsed )); (( BUDGET_SECONDS >= 0 )) || BUDGET_SECONDS=0
 echo "[$(date +%T)] starting matrix '$MATRIX' with ${BUDGET_SECONDS}s budget (after ${elapsed}s of setup)"
-run_fg srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" ${SRUN_BIND_ARGS:---cpu-bind=none --mem-bind=none} \
+# the step inherits whatever allocation you requested: give it every CPU the allocation has on this node (never default to 1)
+STEP_CPUS="${SLURM_CPUS_PER_TASK:-${SLURM_CPUS_ON_NODE:-}}"
+cpu_args=(); [[ -n "$STEP_CPUS" ]] && cpu_args=(--cpus-per-task="$STEP_CPUS")
+run_fg srun --ntasks=1 ${cpu_args[@]+"${cpu_args[@]}"} ${SRUN_BIND_ARGS:---cpu-bind=none --mem-bind=none} \
   "$HERE/run-locality-matrix.sh"
 rc=$?
 
