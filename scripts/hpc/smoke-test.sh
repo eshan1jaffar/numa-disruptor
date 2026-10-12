@@ -25,7 +25,7 @@ if [[ "$bad" != "0" ]]; then echo "smoke FAILED: $bad failed trial(s) in $OUT/re
 if [[ "${SMOKE_ALLOW_SKIPS:-0}" != "1" ]]; then
   missing=""
   for v in V0 V1 V2 V3; do
-    grep '"status":"ok"' "$OUT/results.jsonl" | grep -q "\"variant\":\"$v\"" || missing="$missing $v"
+    grep '"status":"ok"' "$OUT/results.jsonl" | grep "\"variant\":\"$v\"" >/dev/null || missing="$missing $v"
   done
   if [[ -n "$missing" ]]; then
     echo "smoke FAILED: no ok trial for variant(s):$missing (skipped? see $OUT/results.jsonl; SMOKE_ALLOW_SKIPS=1 overrides)" >&2; exit 1

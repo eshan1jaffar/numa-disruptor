@@ -46,7 +46,7 @@ for f in /proc/sys/kernel/numa_balancing /sys/kernel/mm/transparent_hugepage/ena
 done
 nodes="$( { ls /sys/devices/system/node 2>/dev/null || true; } | grep -c '^node' || true )"
 note "NUMA nodes visible: ${nodes:-0}"
-if { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q libnuma; then note "libnuma: present"; else note "libnuma: NOT found (off-heap NUMA payload experiments will be skipped)"; fi
+if { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep libnuma >/dev/null; then note "libnuma: present"; else note "libnuma: NOT found (off-heap NUMA payload experiments will be skipped)"; fi
 command -v perf >/dev/null && note "perf: $(command -v perf)" || note "perf: not installed (no hardware counters)"
 
 note "== java =="
