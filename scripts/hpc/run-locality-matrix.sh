@@ -28,7 +28,7 @@ WRAP=()
 if [[ "${PERF_WRAP:-0}" == "1" ]]; then
   WRAP=("$(dirname "${BASH_SOURCE[0]}")/perf-wrap.sh" "$OUT_DIR/perf" --)
 fi
-exec "${WRAP[@]}" "$BENCH" run \
+exec ${WRAP[@]+"${WRAP[@]}"} "$BENCH" run \
   --matrix "$MATRIX" --trials "${TRIALS:-3}" --warmup "${WARMUP:-5}" --measure "${MEASURE:-10}" \
   --budget-seconds "${BUDGET_SECONDS:-3000}" --resume --out "$OUT_DIR" \
   --jvm-args "${JVM_ARGS:--Xms6g -Xmx6g -Xmn4g -XX:+UseParallelGC -XX:+UseNUMA -XX:+AlwaysPreTouch --enable-native-access=ALL-UNNAMED}"

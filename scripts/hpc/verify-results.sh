@@ -17,16 +17,23 @@ if [[ -f "$dir/MANIFEST.sha256" ]]; then
   ( cd "$dir" && sha256sum -c MANIFEST.sha256 --quiet ) || { echo "MANIFEST checksum mismatch" >&2; status=1; }
 fi
 
+have_py() { command -v python3 >/dev/null 2>&1 && python3 -c 'import json,csv' >/dev/null 2>&1; }
 total=0; ok=0; skipped=0; failed=0
 while IFS= read -r f; do
   d="$(dirname "$f")"
-  n=$(wc -l < "$f"); c=$(( $(wc -l < "$d/results.csv") - 1 ))
-  [[ "$n" -eq "$c" ]] || { echo "$d: $n JSONL records but $c CSV rows" >&2; status=1; }
+  n=$(wc -l < "$f")
+  # CSV cells (e.g. failure reasons) may contain quoted newlines, so count records with a real CSV parser
+  if have_py; then
+    c=$(python3 -c 'import csv,sys; print(max(sum(1 for _ in csv.reader(open(sys.argv[1], newline="")))-1,0))' "$d/results.csv")
+    [[ "$n" -eq "$c" ]] || { echo "$d: $n JSONL records but $c CSV rows" >&2; status=1; }
+  elif [[ "$(wc -l < "$d/results.csv")" -ne $((n + 1)) ]]; then
+    echo "WARNING: $d/results.csv line count differs and python3 is unavailable (quoted newlines?); CSV count check skipped" >&2
+  fi
   total=$((total + n))
   ok=$((ok + $(grep -c '"status":"ok"' "$f" || true)))
   skipped=$((skipped + $(grep -c '"status":"skipped"' "$f" || true)))
   failed=$((failed + $(grep -c '"status":"failed"' "$f" || true)))
-  if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+  if have_py; then
     python3 - "$f" <<'PY' || status=1
 import json, sys
 bad = 0

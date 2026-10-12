@@ -25,9 +25,9 @@ dirty=""
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then dirty="-dirty"; echo "WARNING: working tree has uncommitted changes; the distribution is stamped ${commit}${dirty}" >&2; fi
 
 if [[ $run_tests -eq 1 ]]; then
-  ./gradlew "${gradle_flags[@]}" build
+  ./gradlew ${gradle_flags[@]+"${gradle_flags[@]}"} build
 fi
-./gradlew "${gradle_flags[@]}" :benchmarks:installDist :examples:installDist
+./gradlew ${gradle_flags[@]+"${gradle_flags[@]}"} :benchmarks:installDist :examples:installDist
 
 stage="dist/numa-disruptor"
 rm -rf "$stage"; mkdir -p "$stage"

@@ -44,7 +44,8 @@ for f in /proc/sys/kernel/numa_balancing /sys/kernel/mm/transparent_hugepage/ena
          /proc/sys/kernel/perf_event_paranoid /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor; do
   [[ -r $f ]] && note "$f = $(cat "$f")" || note "$f = (unreadable)"
 done
-ls /sys/devices/system/node 2>/dev/null | grep -c '^node' | xargs -I{} echo "NUMA nodes visible: {}"
+nodes="$( { ls /sys/devices/system/node 2>/dev/null || true; } | grep -c '^node' || true )"
+note "NUMA nodes visible: ${nodes:-0}"
 if { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q libnuma; then note "libnuma: present"; else note "libnuma: NOT found (off-heap NUMA payload experiments will be skipped)"; fi
 command -v perf >/dev/null && note "perf: $(command -v perf)" || note "perf: not installed (no hardware counters)"
 
@@ -56,7 +57,11 @@ else
   ver="$("$JAVA" -version 2>&1 | head -1)"
   note "$JAVA: $ver"
   major="$("$JAVA" -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.specification.version/{print $2}')"
-  [[ "${major:-0}" -ge 25 ]] || bad "JDK 25+ required, found specification version '${major:-?}'"
+  major="${major//[[:space:]]/}"
+  [[ "$major" == 1.* ]] && major="${major#1.}"   # "1.8" -> 8
+  major="${major%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || major=0
+  [[ "$major" -ge 25 ]] || bad "JDK 25+ required, found specification version '${major:-?}'"
 fi
 
 note "== distribution =="

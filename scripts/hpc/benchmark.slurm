@@ -18,12 +18,32 @@
 #   MATRIX        smoke|locality|scale|sweeps|all (default all); re-submit the same command for the next hour
 #   TRIALS WARMUP MEASURE JVM_ARGS  see run-locality-matrix.sh
 #   JAVA_MODULE   `module load` name for JDK 25, or set JAVA_HOME
+#   BUDGET_SECONDS  override the time budget (default: min(real job limit, 3600) - 420 s)
 set -uo pipefail
+set -m   # background children get their own process group, so a signal can be delivered to the whole tree
 
 START=$(date +%s)
-LIMIT_SECONDS=3600
 SAFETY_SECONDS=420          # leave time for the final sync and for the last trial to be killed cleanly
-export BUDGET_SECONDS="${BUDGET_SECONDS:-$(( LIMIT_SECONDS - SAFETY_SECONDS ))}"
+
+# real time limit of this job (sbatch --time= overrides the #SBATCH line); squeue %l is D-HH:MM:SS, HH:MM:SS, MM:SS, MM,
+# UNLIMITED, ... Anything unparsable falls back to the 1 h default.
+slurm_limit_seconds() {
+  local t d=0 h=0 m=0 s=0
+  t="$(squeue -h -j "${SLURM_JOB_ID:-}" -o %l 2>/dev/null | head -1 | tr -d '[:space:]')" || true
+  [[ "$t" =~ ^([0-9]+-)?[0-9]+(:[0-9]+){0,2}$ ]] || { echo 3600; return; }
+  case "$t" in
+    *-*) d=${t%%-*}; IFS=: read -r h m s <<<"${t#*-}" ;;   # D-HH[:MM[:SS]]
+    *:*:*) IFS=: read -r h m s <<<"$t" ;;
+    *:*) IFS=: read -r m s <<<"$t" ;;
+    *) m=$t ;;
+  esac
+  echo $(( 10#${d:-0} * 86400 + 10#${h:-0} * 3600 + 10#${m:-0} * 60 + 10#${s:-0} ))
+}
+LIMIT_SECONDS="$(slurm_limit_seconds)"
+POLICY_SECONDS=$(( LIMIT_SECONDS < 3600 ? LIMIT_SECONDS : 3600 ))   # never plan beyond the 1 h policy unless BUDGET_SECONDS is given
+default_budget=$(( POLICY_SECONDS - SAFETY_SECONDS )); (( default_budget >= 60 )) || default_budget=60
+export BUDGET_SECONDS="${BUDGET_SECONDS:-$default_budget}"
+echo "[$(date +%T)] job time limit ${LIMIT_SECONDS}s, budget ${BUDGET_SECONDS}s"
 
 SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 cd "$SUBMIT_DIR"
@@ -33,7 +53,15 @@ MATRIX="${MATRIX:-all}"
 OUT_DIR="${OUT_DIR:-$SUBMIT_DIR/results/$MATRIX}"
 export OUT_DIR MATRIX
 
-if [[ -n "${JAVA_MODULE:-}" ]]; then module load "$JAVA_MODULE"; fi
+if [[ -n "${JAVA_MODULE:-}" ]]; then
+  if ! declare -F module >/dev/null 2>&1; then
+    for init in /etc/profile.d/modules.sh /etc/profile.d/lmod.sh /usr/share/lmod/lmod/init/bash /usr/share/Modules/init/bash; do
+      [[ -r $init ]] && { source "$init" || true; declare -F module >/dev/null 2>&1 && break; }
+    done
+  fi
+  if ! declare -F module >/dev/null 2>&1; then echo "JAVA_MODULE=$JAVA_MODULE requested but the 'module' command is not available" >&2; exit 1; fi
+  module load "$JAVA_MODULE" || { echo "module load $JAVA_MODULE FAILED" >&2; exit 1; }
+fi
 
 # --- stage the distribution on node-local storage so reading jars never touches the shared filesystem during measurement
 SCRATCH="${SLURM_TMPDIR:-/tmp}/numa-disruptor-${SLURM_JOB_ID:-$$}"
@@ -51,19 +79,38 @@ sync_results() {
   cp -f "$SUBMIT_DIR"/numa-disruptor-"${SLURM_JOB_ID:-}".out "$RESULTS_DIR"/ 2>/dev/null || true
   sync
 }
-on_signal() { echo "[$(date +%T)] caught Slurm warning signal; allocation ends soon, results already flushed per trial"; sync_results; }
-trap on_signal USR1 TERM
-trap sync_results EXIT
+cleanup() { sync_results; rm -rf "$SCRATCH"; }
+CHILD=
+# bash defers traps until a foreground command returns, so every long command runs in the background under `wait`
+run_fg() {
+  local rc
+  "$@" & CHILD=$!
+  while :; do wait "$CHILD"; rc=$?; kill -0 "$CHILD" 2>/dev/null || break; done   # loop: a trapped signal interrupts wait
+  CHILD=; return $rc
+}
+on_usr1() { echo "[$(date +%T)] caught Slurm warning signal; allocation ends soon, results already flushed per trial"; sync_results; }
+on_term() {
+  echo "[$(date +%T)] caught TERM; stopping the run"
+  if [[ -n "$CHILD" ]]; then
+    kill -TERM -- "-$CHILD" 2>/dev/null
+    for _ in $(seq "${TERM_GRACE_SECONDS:-30}"); do kill -0 "$CHILD" 2>/dev/null || break; sleep 1; done
+    kill -KILL -- "-$CHILD" 2>/dev/null
+  fi
+  exit 143   # EXIT trap does the final sync and removes the scratch copy
+}
+trap on_usr1 USR1
+trap on_term TERM
+trap cleanup EXIT
 
 # --- validate, then gate on correctness
-"$HERE/environment-check.sh" || { echo "environment check failed, not benchmarking" >&2; exit 1; }
-SMOKE_OUT="$RESULTS_DIR/smoke" "$HERE/smoke-test.sh" || { echo "smoke test failed, not benchmarking" >&2; exit 1; }
+run_fg "$HERE/environment-check.sh" || { echo "environment check failed, not benchmarking" >&2; exit 1; }
+SMOKE_OUT="$RESULTS_DIR/smoke" run_fg "$HERE/smoke-test.sh" || { echo "smoke test failed, not benchmarking" >&2; exit 1; }
 
 # --- benchmark under the remaining budget. srun keeps Slurm's cpuset/cgroup; we pin threads ourselves, so no extra binding.
 elapsed=$(( $(date +%s) - START ))
-export BUDGET_SECONDS=$(( BUDGET_SECONDS - elapsed ))
+export BUDGET_SECONDS=$(( BUDGET_SECONDS - elapsed )); (( BUDGET_SECONDS >= 0 )) || BUDGET_SECONDS=0
 echo "[$(date +%T)] starting matrix '$MATRIX' with ${BUDGET_SECONDS}s budget (after ${elapsed}s of setup)"
-srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" ${SRUN_BIND_ARGS:---cpu-bind=none --mem-bind=none} \
+run_fg srun --ntasks=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" ${SRUN_BIND_ARGS:---cpu-bind=none --mem-bind=none} \
   "$HERE/run-locality-matrix.sh"
 rc=$?
 
