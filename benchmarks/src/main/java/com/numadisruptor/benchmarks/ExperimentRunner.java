@@ -118,6 +118,7 @@ final class ExperimentRunner {
         PayloadSlab[] slabs = null;
         final Map<String, Object> offheapReport = new LinkedHashMap<>();
         NumaAllocator numa = null;
+        java.util.BitSet priorAffinity = null;
         try {
             if (c.offheap) {
                 try {
@@ -140,6 +141,7 @@ final class ExperimentRunner {
             }
             if (!reserved.isEmpty()) {
                 try {
+                    priorAffinity = affinity.currentThreadAffinity();
                     affinity.pinCurrentThread(reserved);
                 } catch (final RuntimeException e) {
                     offheapReport.put("driverPinFailed", e.toString());
@@ -147,6 +149,14 @@ final class ExperimentRunner {
             }
             return runPipeline(c, spec, topology, affinity, placement, slabs, offheapReport, totalProducers, limitPerProducer, constraints);
         } finally {
+            if (priorAffinity != null) {
+                // threads inherit the creator's affinity: an unrestored driver pin would squeeze the next in-JVM trial onto one CPU
+                try {
+                    affinity.pinCurrentThread(priorAffinity);
+                } catch (final RuntimeException ignored) {
+                    // best effort
+                }
+            }
             for (final NumaMemoryRegion region : regions) {
                 region.close();
             }
@@ -207,7 +217,6 @@ final class ExperimentRunner {
         final long windowStartNanos;
         final long windowEndNanos;
 
-        ctl.originNanos = System.nanoTime();
         processor.start(TradingWorkload.producer(c, ctl, slabs, affinity, probes, published));
         try {
             if (limitPerProducer != Long.MAX_VALUE) { // verification run: producers stop themselves
@@ -228,16 +237,16 @@ final class ExperimentRunner {
             stallsAtStart = stalls(processor);
             s0 = SystemSnapshot.take();
             windowStartNanos = System.nanoTime();
+            ctl.windowStartNanos = windowStartNanos;
             ctl.phase = RunControl.MEASURE;
             sleepSeconds(c.measureSeconds);
             windowEndNanos = System.nanoTime();
+            ctl.windowEndNanos = windowEndNanos;
             ctl.phase = RunControl.DONE;
             s1 = SystemSnapshot.take();
             stallsAtEnd = stalls(processor);
             }
-        } finally {
             ctl.stop = true;
-        }
         if (!processor.awaitProducers(Duration.ofSeconds(30))) {
             throw new IllegalStateException("producers did not stop");
         }
@@ -245,6 +254,16 @@ final class ExperimentRunner {
 
         return collect(c, processor, placement, gateways, strategy, published, probes, s0, s1, windowEndNanos - windowStartNanos,
             heapKiBAtStart, stallsAtEnd, stallsAtStart, offheapReport, totalProducers);
+        } catch (final Throwable t) {
+            // never leave pinned spinners running under regions the caller is about to close
+            ctl.stop = true;
+            try {
+                processor.stop(Duration.ofSeconds(30));
+            } catch (final RuntimeException suppressed) {
+                t.addSuppressed(suppressed);
+            }
+            throw t;
+        }
     }
 
     private static long[] stalls(final NumaEventProcessor<TradingEvent> p) {

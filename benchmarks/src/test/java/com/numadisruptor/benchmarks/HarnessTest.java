@@ -247,4 +247,101 @@ class HarnessTest {
         assertTrue(((Number) lat.get("p99Ns")).longValue() <= ((Number) lat.get("maxNs")).longValue());
         assertTrue(((Number) lat.get("count")).longValue() > 10_000);
     }
+
+    // ---- regression tests for the review findings ----
+
+    @Test
+    void driverPinIsRestoredAfterAnInProcessTrial() throws Exception {
+        final SimulatedCpuAffinity sim = new SimulatedCpuAffinity(epyc.allowedCpus());
+        final java.util.BitSet before = sim.currentThreadAffinity();
+        final Map<String, Object> r = ExperimentRunner.verify(
+            cfg("variant", "V1", "locality", "DENSE", "ring", "256", "wait", "YIELDING"), 5_000, epyc, sim);
+        assertEquals("ok", r.get("status"), String.valueOf(r.get("reason")));
+        assertEquals(before, sim.currentThreadAffinity(), "main must not stay pinned: later trials would inherit it");
+    }
+
+    @Test
+    void paceOriginIsSharedAndLiesAheadOfTheFirstCaller() {
+        final RunControl ctl = new RunControl(Long.MAX_VALUE);
+        final long t0 = System.nanoTime();
+        final long o = ctl.origin();
+        assertTrue(o - t0 > 0, "origin leads the first producer so start-up cost cannot put it behind schedule");
+        assertEquals(o, ctl.origin());
+    }
+
+    @Test
+    void latencyIsSelectedByIntendedSendTimeNotByDeliveryPhase() {
+        final ExperimentConfig c = cfg("metric", "LATENCY", "bytes", "0");
+        final RunControl ctl = new RunControl(Long.MAX_VALUE);
+        final long base = System.nanoTime() - 1_000_000;
+        ctl.windowStartNanos = base + 1_000;
+        ctl.windowEndNanos = base + 2_000;
+        final TradingWorkload.Gateway g = new TradingWorkload.Gateway(c, 0, 0, ctl, new SimulatedCpuAffinity(epyc.allowedCpus()), new MigrationProbe());
+        long seq = 0;
+        for (final long intended : new long[] {500, 1_500, 1_999, 2_000, 3_000}) { // warm-up, in, in, end is exclusive, after
+            final TradingEvent e = new TradingEvent(0);
+            e.producerId = 0;
+            e.producerSequence = seq++;
+            e.intendedNanos = base + intended;
+            g.onBatchStart(1, 0); // phase is still WARMUP: delivery phase must not matter for latency
+            g.onEvent(e, seq, true);
+        }
+        assertEquals(2, g.histogram.getTotalCount());
+        assertEquals(0, g.measured, "throughput counting is by delivery phase and the phase was never MEASURE");
+    }
+
+    @Test
+    void resumeRetriesFailedIgnoresTornLinesAndAppendsOnAFreshLine(@TempDir final Path dir) throws Exception {
+        final ResultsStore store = new ResultsStore(dir);
+        for (final String[] r : new String[][] {{"OK", "ok"}, {"BAD", "failed"}, {"SKIP", "skipped"}}) {
+            final Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r[0]);
+            m.put("trial", 1);
+            m.put("status", r[1]);
+            store.append(m);
+        }
+        assertEquals(Set.of("OK#1"), store.completedKeys(), "default: failed and skipped are retried");
+        assertEquals(Set.of("OK#1", "BAD#1"), store.completedKeys(true));
+
+        // a killed run leaves a torn last line without newline; it must not count and must not swallow the next record
+        Files.writeString(dir.resolve("results.jsonl"), "{\"id\":\"TORN\",\"trial\":1,\"stat", java.nio.file.StandardOpenOption.APPEND);
+        assertEquals(Set.of("OK#1"), store.completedKeys());
+        final Map<String, Object> next = new LinkedHashMap<>();
+        next.put("id", "NEXT");
+        next.put("trial", 2);
+        next.put("status", "ok");
+        store.append(next);
+        assertEquals(Set.of("OK#1", "NEXT#2"), store.completedKeys());
+    }
+
+    @Test
+    void warmupIsPartOfTheIdentity() {
+        assertFalse(cfg("warmup", "1").id().equals(cfg("warmup", "5").id()));
+        assertFalse(cfg("warmup", "1").workloadKey().equals(cfg("warmup", "5").workloadKey()));
+    }
+
+    @Test
+    void sameNodeCapacityExcludesTheReservedDriverCpu() {
+        final java.util.BitSet reserved = new java.util.BitSet();
+        reserved.set(0); // driver cpu lives on node 0
+        final ExperimentConfig c = cfg("variant", "V1", "locality", "SAME_NODE", "partitions", "4", "stages", "0");
+        final WorkloadSpec spec = new WorkloadSpec(c.partitions, c.producersPerPartition, c.stages, c.consumersPerPartition,
+            c.mode, c.ringSize, false, 1e6, c.eventBytes, 8);
+        final PlacementFactory.Resolved r = PlacementFactory.resolve(c, spec, epyc, new PlacementConstraints(true, reserved)); // 8 workers
+        assertNull(r.skipReason(), "another node fits all 8 workers");
+        assertFalse(r.plan().cpus().values().stream().anyMatch(cpu -> cpu == 0));
+    }
+
+    @Test
+    void verifyFailsWhenPinnedVariantsCannotRunUnlessExplicitlyAllowed() throws Exception {
+        final SimulatedCpuAffinity sim = new SimulatedCpuAffinity(epyc.allowedCpus());
+        final com.numadisruptor.affinity.CpuAffinity unsupported = new com.numadisruptor.affinity.CpuAffinity() {
+            @Override public boolean isSupported() { return false; }
+            @Override public java.util.BitSet currentThreadAffinity() { return sim.currentThreadAffinity(); }
+            @Override public void pinCurrentThread(final java.util.BitSet cpus) { sim.pinCurrentThread(cpus); }
+            @Override public int currentCpu() { return sim.currentCpu(); }
+        };
+        assertFalse(HarnessMain.verify(2_000, false, epyc, unsupported));
+        assertTrue(HarnessMain.verify(2_000, true, epyc, unsupported));
+    }
 }

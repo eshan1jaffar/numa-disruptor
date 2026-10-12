@@ -25,9 +25,11 @@ import java.util.concurrent.TimeUnit;
  *   list   --matrix NAME             print experiment ids
  *   run    --matrix NAME [options]   run a matrix, appending results.jsonl / results.csv
  *   run-one key=value ... --trial N  run one trial in this JVM, print RESULT_JSON:{...}
- *   verify [--events N]              fixed-count correctness check of V0..V3 against an independent reference
+ *   verify [--events N] [--allow-skip-pinned]
+ *                                    fixed-count check of V0..V3 against an independent reference; exits 1 if V0 fails or a
+ *                                    pinned variant (V1-V3) is skipped, unless --allow-skip-pinned
  * </pre>
- * run options: {@code --out DIR --trials N --warmup S --measure S --budget-seconds B --resume --no-fork --filter TEXT --jvm-args "..."}
+ * run options: {@code --out DIR --trials N --warmup S --measure S --budget-seconds B --resume --no-fork --keep-failed --filter TEXT --jvm-args "..."}
  */
 public final class HarnessMain {
     private static final String RESULT_PREFIX = "RESULT_JSON:";
@@ -53,14 +55,14 @@ public final class HarnessMain {
             }
             case "run" -> runMatrix(opts);
             case "run-one" -> runOne(opts);
-            case "verify" -> System.exit(verify(Long.parseLong(opts.getOrDefault("events", "200000"))) ? 0 : 1);
+            case "verify" -> System.exit(verify(Long.parseLong(opts.getOrDefault("events", "200000")), opts.containsKey("allow-skip-pinned")) ? 0 : 1);
             default -> usage();
         }
     }
 
     private static void usage() {
         System.out.println("usage: HarnessMain topology | list --matrix M | run --matrix M [--out DIR --trials N --warmup S --measure S"
-            + " --budget-seconds B --resume --no-fork --filter T --jvm-args \"...\"] | run-one k=v... --trial N | verify [--events N]");
+            + " --budget-seconds B --resume --no-fork --keep-failed --filter T --jvm-args \"...\"] | run-one k=v... --trial N | verify [--events N] [--allow-skip-pinned]");
     }
 
     static Map<String, String> parse(final String[] argv, final int from) {
@@ -95,7 +97,7 @@ public final class HarnessMain {
         final boolean fork = !o.containsKey("no-fork");
         final String filter = o.get("filter");
         final ResultsStore store = new ResultsStore(Path.of(o.getOrDefault("out", "results/" + matrix)));
-        final Set<String> done = o.containsKey("resume") ? store.completedKeys() : Set.of();
+        final Set<String> done = o.containsKey("resume") ? store.completedKeys(o.containsKey("keep-failed")) : Set.of();
         final long start = System.nanoTime();
 
         final List<ExperimentConfig> configs = new ArrayList<>(Matrices.byName(matrix, warmup, measure));
@@ -227,9 +229,16 @@ public final class HarnessMain {
      * Runs the same fixed-count workload under V0, V1, V2 and V3 and checks that every variant delivers exactly the same orders
      * as an independent single-threaded computation. This is the evidence that speed comparisons are between equivalent work.
      */
-    static boolean verify(final long events) throws Exception {
-        final NumaTopology topology = TopologyDiscovery.discover();
-        final CpuAffinity affinity = CpuAffinity.system();
+    static boolean verify(final long events, final boolean allowSkipPinned) throws Exception {
+        return verify(events, allowSkipPinned, TopologyDiscovery.discover(), CpuAffinity.system());
+    }
+
+    /**
+     * A pinned variant (V1-V3) that is skipped, for any reason, fails the check unless {@code allowSkipPinned}: a gate that
+     * passes with nothing but V0 having run has verified nothing about pinning. V0 is always required.
+     */
+    static boolean verify(final long events, final boolean allowSkipPinned, final NumaTopology topology, final CpuAffinity affinity)
+        throws Exception {
         boolean ok = true;
         final int partitions = 2;
         final long reference = sumReference(partitions, events);
@@ -237,7 +246,8 @@ public final class HarnessMain {
         final String[][] variants = {{"V0", "OS"}, {"V1", "DENSE"}, {"V2", "DENSE"}, {"V3", "AUTO"}};
         for (final String[] vl : variants) {
             if (!"V0".equals(vl[0]) && !affinity.isSupported()) {
-                System.out.println(vl[0] + ": SKIPPED (pinning unsupported on this host)");
+                System.out.println(vl[0] + ": SKIPPED (pinning unsupported on this host)" + (allowSkipPinned ? "" : " -> FAIL (use --allow-skip-pinned to accept)"));
+                ok &= allowSkipPinned;
                 continue;
             }
             final ExperimentConfig c = ExperimentConfig.of(Map.of("variant", vl[0], "locality", vl[1], "partitions", Integer.toString(partitions),
@@ -248,7 +258,7 @@ public final class HarnessMain {
             final boolean good = "ok".equals(r.get("status")) && corr != null
                 && ((Number) corr.get("orderChecksum")).longValue() == reference;
             System.out.println(vl[0] + ": " + (good ? "OK " : "MISMATCH ") + (corr != null ? corr : r.get("reason") + " " + r));
-            ok &= good || "skipped".equals(r.get("status"));
+            ok &= good || allowSkipPinned && !"V0".equals(vl[0]) && "skipped".equals(r.get("status"));
         }
         return ok;
     }

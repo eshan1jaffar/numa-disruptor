@@ -9,8 +9,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Append-only results: one JSON object per line ({@code results.jsonl}, the full record) plus a flat {@code results.csv}.
@@ -26,8 +24,6 @@ final class ResultsStore {
         "published", "delivered", "lost", "outOfOrder", "payloadErrors", "orderChecksum",
         "gitCommit", "host", "timestamp");
 
-    private static final Pattern ID = Pattern.compile("\"id\":\"([^\"]*)\",\"trial\":(\\d+)");
-
     private final Path dir;
     private final Path jsonl;
     private final Path csv;
@@ -42,18 +38,32 @@ final class ResultsStore {
         }
     }
 
-    /** "id#trial" keys of every record already stored (any status), for resuming a partially finished matrix. */
+    /** Default for resuming: failed trials are retried, like skipped ones. */
     Set<String> completedKeys() throws IOException {
+        return completedKeys(false);
+    }
+
+    /**
+     * "id#trial" keys of records already stored, for resuming a partially finished matrix. Only lines that parse as complete JSON
+     * objects count (a torn last line from a killed run is ignored). Skipped records are always retried (another allocation may
+     * have the topology this one lacked); failed ones are retried unless {@code failedCountsAsDone}.
+     */
+    Set<String> completedKeys(final boolean failedCountsAsDone) throws IOException {
         final Set<String> keys = new HashSet<>();
         if (Files.exists(jsonl)) {
             for (final String line : Files.readAllLines(jsonl, StandardCharsets.UTF_8)) {
-                if (line.contains("\"status\":\"skipped\"")) {
-                    continue; // a different allocation may have the topology this one lacked: retry
+                final Map<String, Object> rec;
+                try {
+                    rec = MiniJson.parseObject(line);
+                } catch (final RuntimeException e) {
+                    continue; // torn or blank line
                 }
-                final Matcher m = ID.matcher(line);
-                if (m.find()) {
-                    keys.add(m.group(1) + "#" + m.group(2));
+                final Object status = rec.get("status");
+                if (!(rec.get("id") instanceof String id) || !(rec.get("trial") instanceof Number trial)
+                    || "skipped".equals(status) || !failedCountsAsDone && "failed".equals(status)) {
+                    continue;
                 }
+                keys.add(key(id, trial.intValue()));
             }
         }
         return keys;
@@ -73,8 +83,18 @@ final class ResultsStore {
     }
 
     private static void write(final Path p, final String text) throws IOException {
+        String prefix = "";
+        if (Files.exists(p) && Files.size(p) > 0) {
+            try (var in = java.nio.channels.FileChannel.open(p, StandardOpenOption.READ)) {
+                final java.nio.ByteBuffer last = java.nio.ByteBuffer.allocate(1);
+                in.read(last, in.size() - 1);
+                if (last.get(0) != '\n') {
+                    prefix = "\n"; // a killed run left a torn last line: never glue the next record onto it
+                }
+            }
+        }
         try (var ch = java.nio.channels.FileChannel.open(p, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND)) {
-            ch.write(java.nio.ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8)));
+            ch.write(java.nio.ByteBuffer.wrap((prefix + text).getBytes(StandardCharsets.UTF_8)));
             ch.force(true);
         }
     }

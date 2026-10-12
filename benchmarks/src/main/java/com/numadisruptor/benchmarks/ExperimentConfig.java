@@ -111,7 +111,7 @@ public final class ExperimentConfig {
         return "p" + partitions + "x" + producersPerPartition + "x" + consumersPerPartition + "-s" + stages + "-" + mode
             + "-r" + ringSize + "-b" + eventBytes + "-" + wait + "-w" + workIterations
             + "-" + (metric == Metric.THROUGHPUT ? "tp" : "lat" + targetRate)
-            + "-m" + measureSeconds + "-i" + instrumentsPerPartition;
+            + "-wu" + warmupSeconds + "-m" + measureSeconds + "-i" + instrumentsPerPartition;
     }
 
     /** Unique, human-readable, filesystem-safe identifier of this configuration. */

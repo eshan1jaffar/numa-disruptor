@@ -32,14 +32,14 @@ set, off-heap vs heap payload, throughput and latency), `scale` (1-16 partitions
 producers, consumers, multicast vs work distribution, ring size, event size, wait strategy, workload intensity, with/without the
 strategy stage), `all`. Every experiment runs `--trials` times (default 3), **each in a fresh JVM**, so JIT profiles and heap state
 cannot leak between variants. Trial 1 of every experiment runs before trial 2 of any, so a run cut short still covers the matrix.
-At 5 s warm-up + 10 s measurement the full matrix needs more than one hour; `--resume` divides it across allocations.
+At 5 s warm-up + 10 s measurement the full matrix needs more than one hour; `--resume` divides it across allocations; it retries `skipped` and `failed` trials (add `--keep-failed` to treat failed as done) and ignores torn last lines. Warm-up length is part of the config id/`workloadKey`.
 
 ## Measurements
 
 | metric | how | caveat |
 |---|---|---|
-| events/s | completed orders at the gateways during the measurement window (unique events: gateway 0 when multicast, all when work-distributed) | closed loop: producers saturate the ring |
-| p50/p95/p99/p99.9/max latency | HdrHistogram of `receipt − intended send time`; producers are paced open-loop at `rate`, so a late producer is charged the queueing delay (coordinated-omission corrected) | includes two `System.nanoTime` calls; the overhead is measured per run (`latency.nanoTimeOverheadNs`) and reported, not subtracted. `nanoTime` is `CLOCK_MONOTONIC`, comparable across cores |
+| events/s | completed orders at the gateways during the measurement window (counted by the phase in which the gateway receives them) (unique events: gateway 0 when multicast, all when work-distributed) | closed loop: producers saturate the ring |
+| p50/p95/p99/p99.9/max latency | HdrHistogram of `receipt − intended send time`; producers are paced open-loop at `rate`, so a late producer is charged the queueing delay (coordinated-omission corrected) | a sample belongs to the window when its **intended send time** lies in it (not when it is delivered), so late deliveries of in-window sends are kept and warm-up backlog is not; the schedule origin is fixed by the first producer thread to run (after ring construction), so `latency.count` can differ from `eventsMeasured`. Includes two `System.nanoTime` calls; the overhead is measured per run (`latency.nanoTimeOverheadNs`) and reported, not subtracted. `nanoTime` is `CLOCK_MONOTONIC`, comparable across cores |
 | producer stalls | failed claims (ring full) in the window, absolute and per million events | |
 | CPU utilisation | process CPU time / wall time in the window | busy-spinners read ~100% per worker by design |
 | CPU migrations | `sched_getcpu` sampled every 16384 events per worker; changes counted | **software proxy**, a lower bound |
@@ -78,6 +78,7 @@ Output: `results.jsonl` (full record per trial, fsync'd per append) and `results
 B=benchmarks/build/install/benchmarks/bin/benchmarks
 $B topology
 $B verify --events 200000
+# exits non-zero if V0 fails or a pinned variant (V1-V3) is skipped; pass --allow-skip-pinned only on hosts without pinning
 $B run --matrix smoke --trials 1 --out results/smoke
 $B run --matrix scale --trials 3 --warmup 5 --measure 10 --filter V3 --out results/scale     # filter by id substring
 $B run-one variant=V3 locality=AUTO partitions=4 metric=LATENCY rate=400000 --trial 1        # one trial, one JVM
