@@ -13,3 +13,4 @@ dist/
 analysis/__pycache__/
 analysis/out/
 analysis/figures/
+.claude/
