@@ -45,13 +45,25 @@ At 5 s warm-up + 10 s measurement the full matrix needs more than one hour; `--r
 | CPU migrations | `sched_getcpu` sampled every 16384 events per worker; changes counted | **software proxy**, a lower bound |
 | memory placement | `/proc/self/numa_maps` per-node KiB of large mappings; off-heap residency by `numa_move_pages` | Java heap placement is best effort |
 | NUMA counters | per-node `numastat` deltas | **page-allocation proxy**, system-wide, not remote-access counts |
-| hardware remote-memory / coherence counters | **not collected by the harness**; recorded availability (`metadata.hardwareCounters`) | wrap runs in `perf stat` where permitted |
+| hardware remote-memory / coherence counters | **not collected per trial by the harness**; recorded availability (`metadata.hardwareCounters`) | optional whole-run `perf stat` via `PERF_WRAP=1`, see "Hardware counters" |
 | optimizer overhead | wall time of graph build + optimization (`placement.optimizerNanos`), plus JMH `PlacementOptimizerBenchmark` | one-off at start, includes cold code in forked runs |
 | GC / allocation | collections, pause ms, allocated bytes per event in the window | the steady state should allocate ~0 |
 
 Each record also stores: commit, timestamp, anonymised host, CPU model, kernel, JVM + flags, Disruptor version, allowed CPU and
 memory masks, discovered topology, cgroup quota, Slurm variables, and kernel settings that confound NUMA results
 (`numa_balancing`, THP, governor, `perf_event_paranoid`).
+
+### Hardware counters
+
+`PERF_WRAP=1 scripts/hpc/run-locality-matrix.sh` runs the matrix driver under `scripts/hpc/perf-wrap.sh`, which uses
+`perf stat -x,` when `perf` exists and `perf_event_paranoid` <= 2 (or root). Events (cycles, instructions, cache-misses, plus
+node-* / remote-or-far DRAM events the host supports) are probed one by one; unsupported ones are dropped. Output goes to
+`$OUT_DIR/perf/`: `perf-stat.csv`, `perf-events.txt`, or `perf-unavailable.txt` with the reason (the run is never failed by
+perf). `python analysis/parse_perf.py perf-stat.csv` flattens the CSV to JSON.
+
+Limitation: the counters cover the **whole matrix process tree** (driver, every trial JVM, warmup and idle time together), not
+individual trials, and are not joined to `results.jsonl`. They show whether remote-memory events are non-trivial for the run as
+a whole; they cannot attribute a count to one variant. Per-trial counters would need the harness to wrap each trial JVM.
 
 Safeguards: spinning workloads (`BUSY_SPIN`, `YIELDING`) with more workers than allowed CPUs minus one are skipped (they would
 measure the scheduler); pinned variants reserve the highest allowed CPU for the driver thread; every trial checks conservation

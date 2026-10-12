@@ -8,6 +8,8 @@
 #   BUDGET_SECONDS  stop launching new trials once the next one could not finish in time (default 3000)
 #   OUT_DIR         results directory (default results/$MATRIX)
 #   JVM_ARGS        flags for each trial JVM
+#   PERF_WRAP       1 = run the whole driver under scripts/hpc/perf-wrap.sh (default 0); output in $OUT_DIR/perf/.
+#                   Counters cover the entire matrix process tree, NOT single trials.
 set -euo pipefail
 export DIST_DIR="${DIST_DIR:-$PWD/dist/numa-disruptor}"
 BENCH="$DIST_DIR/benchmarks/bin/benchmarks"
@@ -22,7 +24,11 @@ fi
 
 mkdir -p "$OUT_DIR"
 echo "matrix=$MATRIX trials=${TRIALS:-3} budget=${BUDGET_SECONDS:-3000}s out=$OUT_DIR"
-exec "$BENCH" run \
+WRAP=()
+if [[ "${PERF_WRAP:-0}" == "1" ]]; then
+  WRAP=("$(dirname "${BASH_SOURCE[0]}")/perf-wrap.sh" "$OUT_DIR/perf" --)
+fi
+exec "${WRAP[@]}" "$BENCH" run \
   --matrix "$MATRIX" --trials "${TRIALS:-3}" --warmup "${WARMUP:-5}" --measure "${MEASURE:-10}" \
   --budget-seconds "${BUDGET_SECONDS:-3000}" --resume --out "$OUT_DIR" \
   --jvm-args "${JVM_ARGS:--Xms6g -Xmx6g -Xmn4g -XX:+UseParallelGC -XX:+UseNUMA -XX:+AlwaysPreTouch --enable-native-access=ALL-UNNAMED}"

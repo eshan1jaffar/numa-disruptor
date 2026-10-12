@@ -163,8 +163,8 @@ check out the recorded commit, build with `build-offline.sh`, run the same matri
 
 * Java heap placement is **best effort**: rings are first-touched on a node-pinned thread, but Java offers no placement API and GC
   may move objects. Check `numa.jvmMappingsResidentKiBByNode` in the results. Only off-heap payloads have verified placement.
-* Hardware remote-memory and coherence counters are **not read** by the harness. Where `perf` is permitted it can be wrapped
-  around a run; otherwise only labelled software proxies are recorded (numastat page-allocation deltas, sampled CPU migrations).
+* Hardware remote-memory and coherence counters are **not read per trial** by the harness. Where `perf` is permitted,
+  `PERF_WRAP=1` wraps the whole matrix run (aggregate only, see BENCHMARKING.md); otherwise only labelled software proxies are recorded (numastat page-allocation deltas, sampled CPU migrations).
 * Multi-node behaviour has **not been measured yet** in this repository: development hosts have one NUMA node. The cluster runs
   are the experiment.
 * Work distribution has no ordering between workers; multi-producer rings have no cross-producer order guarantee beyond a single
