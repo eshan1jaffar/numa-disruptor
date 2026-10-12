@@ -99,6 +99,29 @@ class TopologyDiscoveryTest {
     }
 
     @Test
+    void wrongDistanceColumnCountIsFlaggedAsGuessed() throws IOException {
+        final Path sys = fabricateSys();
+        assertFalse(TopologyDiscovery.discover(sys, null, null).distancesGuessed());
+        write(sys.resolve("node/node1/distance"), "12 10\n");
+        final NumaTopology t = TopologyDiscovery.discover(sys, null, null);
+        assertTrue(t.distancesGuessed());
+        assertEquals(20, t.distance(1, 0));
+        assertTrue(t.describe().contains("distances: guessed"));
+        assertTrue(t.restrictedTo(CpuList.parse("0-7")).distancesGuessed());
+    }
+
+    @Test
+    void coreKeyIgnoresRepeatedCoreIdsAcrossDiesOfOnePackage() {
+        // same socket and same core_id 0, but different sibling pairs: two distinct physical cores
+        final CpuTopology a = new CpuTopology(0, 0, 0, 0, List.of(0, 1));
+        final CpuTopology a2 = new CpuTopology(1, 0, 0, 0, List.of(0, 1));
+        final CpuTopology b = new CpuTopology(2, 0, 0, 0, List.of(2, 3));
+        assertEquals(a.physicalCoreKey(), a2.physicalCoreKey());
+        assertFalse(a.physicalCoreKey() == b.physicalCoreKey());
+        assertFalse(a.physicalCoreKey() == new CpuTopology(0, 1, 1, 0, List.of(0, 1)).physicalCoreKey());
+    }
+
+    @Test
     void readsCgroupQuota() throws IOException {
         final Path max = tmp.resolve("cpu.max");
         Files.writeString(max, "200000 100000\n");

@@ -49,8 +49,13 @@ import java.util.concurrent.atomic.LongAdder;
 public final class NumaEventProcessor<E> implements AutoCloseable {
     private enum State { NEW, RUNNING, STOPPING, STOPPED }
 
-    /** Counters; all except {@code failedEvents} are exact only after producers finished. */
-    public record Stats(long producerStalls, long externalStalls, long failedEvents, long frameworkPublished) { }
+    /**
+     * Counters; all except {@code failedEvents} are exact only after producers finished. {@code producerStalls} counts every
+     * failed claim attempt (spin iterations, so it grows with time spent blocked); {@code producerStallEpisodes} counts how
+     * many times a producer entered the blocked state.
+     */
+    public record Stats(long producerStalls, long externalStalls, long failedEvents, long frameworkPublished,
+                        long producerStallEpisodes) { }
 
     private final WorkloadSpec spec;
     private final EventFactory<E> eventFactory;
@@ -72,6 +77,8 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
     private final List<Throwable> failures = new CopyOnWriteArrayList<>();
     private final AtomicLong failedEvents = new AtomicLong();
     private final LongAdder externalStalls = new LongAdder();
+    /** External publishers currently between the RUNNING check and the end of their publish; stop() waits for it to reach 0. */
+    private final LongAdder inFlightPublishers = new LongAdder();
     private final List<List<NumaDisruptorFactory.Ring<E>>> rings = new ArrayList<>();
     private ProducerScheduler<E> scheduler;
     private PlacementPlan plan;
@@ -295,6 +302,13 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
         state = State.STOPPING;
         final long deadline = System.nanoTime() + timeout.toNanos();
         try {
+            while (inFlightPublishers.sum() != 0) { // external publishers past the RUNNING check; they finish in bounded time
+                if (System.nanoTime() > deadline) {
+                    failures.add(new java.util.concurrent.TimeoutException("external publishers did not leave within " + timeout));
+                    break;
+                }
+                Thread.onSpinWait();
+            }
             if (scheduler != null) {
                 if (!scheduler.await(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
                     failures.add(new java.util.concurrent.TimeoutException("producer tasks did not return within " + timeout));
@@ -356,15 +370,22 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
         if (!spec.externalPublishers()) {
             throw new IllegalStateException("externalPublishers(true) was not configured");
         }
-        if (state != State.RUNNING) {
-            throw new IllegalStateException("processor is not running: " + state);
+        // Register as in flight BEFORE checking the state: stop() flips the state and then waits for this counter to reach
+        // zero, so a publisher either sees the state change or is waited for; an accepted event is always drained.
+        inFlightPublishers.increment();
+        try {
+            if (state != State.RUNNING) {
+                throw new IllegalStateException("processor is not running: " + state);
+            }
+            final RingBuffer<E> ring = rings.get(router.route(routingKey, spec.partitions())).get(0).disruptor().getRingBuffer();
+            if (ring.tryPublishEvent(translator, arg)) {
+                return true;
+            }
+            externalStalls.increment();
+            return false;
+        } finally {
+            inFlightPublishers.decrement();
         }
-        final RingBuffer<E> ring = rings.get(router.route(routingKey, spec.partitions())).get(0).disruptor().getRingBuffer();
-        if (ring.tryPublishEvent(translator, arg)) {
-            return true;
-        }
-        externalStalls.increment();
-        return false;
     }
 
     /**
@@ -403,7 +424,7 @@ public final class NumaEventProcessor<E> implements AutoCloseable {
 
     public Stats stats() {
         return new Stats(scheduler == null ? 0 : scheduler.totalStalls(), externalStalls.sum(), failedEvents.get(),
-            scheduler == null ? 0 : scheduler.totalPublished());
+            scheduler == null ? 0 : scheduler.totalPublished(), scheduler == null ? 0 : scheduler.totalStallEpisodes());
     }
 
     /** Human-readable placement, one line per vertex. */

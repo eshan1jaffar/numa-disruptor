@@ -214,6 +214,33 @@ class PlacementOptimizerTest {
     }
 
     @Test
+    void reservedCpuSiblingIsNotTreatedAsFreeCoreWhenSmtSharingDisallowed() {
+        final java.util.BitSet reserved = CpuList.parse("0");
+        final PlacementConstraints no = new PlacementConstraints(false, reserved);
+        // cpu 1 is the sibling of reserved cpu 0: its core is busy, so 3 cores remain on node 0
+        assertEquals(List.of(2, 4, 6), CpuAssigner.orderedPool(epyc, no, 0));
+        // with sharing allowed the sibling is still usable, but only after every free core
+        assertEquals(List.of(2, 4, 6, 1, 3, 5, 7), CpuAssigner.orderedPool(epyc, new PlacementConstraints(true, reserved), 0));
+    }
+
+    @Test
+    void validateRejectsSmtSiblingCollisionsWhenSharingDisallowed() {
+        final CommunicationGraph g = CommunicationGraph.builder()
+            .vertex(CommunicationVertex.worker("a", VertexType.PRODUCER))
+            .vertex(CommunicationVertex.worker("b", VertexType.CONSUMER)).build();
+        final java.util.Map<String, Integer> nodes = java.util.Map.of("a", 0, "b", 0);
+        final PlacementPlan siblings = new PlacementPlan(nodes, java.util.Map.of("a", 2, "b", 3), 0, "manual", List.of());
+        assertTrue(siblings.validate(g, epyc, PlacementConstraints.defaults()).isEmpty());
+        assertFalse(siblings.validate(g, epyc, PlacementConstraints.noSmtSharing()).isEmpty());
+        final PlacementPlan apart = new PlacementPlan(nodes, java.util.Map.of("a", 2, "b", 4), 0, "manual", List.of());
+        assertTrue(apart.validate(g, epyc, PlacementConstraints.noSmtSharing()).isEmpty());
+        // worker on the sibling of a reserved cpu
+        final PlacementConstraints reservedZero = new PlacementConstraints(false, CpuList.parse("0"));
+        final PlacementPlan onSibling = new PlacementPlan(nodes, java.util.Map.of("a", 1, "b", 4), 0, "manual", List.of());
+        assertFalse(onSibling.validate(g, epyc, reservedZero).isEmpty());
+    }
+
+    @Test
     void workersTakeDistinctCoresBeforeSmtSiblings() {
         final CommunicationGraph g = pipelines(1); // 3 workers, node 0 has 4 cores x 2 threads
         final PlacementPlan plan = new GreedyPlacementOptimizer().place(g, epyc, model);

@@ -22,6 +22,9 @@ public final class NumaAllocator {
     /** Conventional small-page size; used only as a stride for prefaulting and residency sampling. */
     static final int PAGE_SIZE = 4096;
 
+    /** Pre-fill for page status entries; negative, so a page the kernel never wrote counts as unresolved. */
+    static final int UNSET = Integer.MIN_VALUE;
+
     private static final List<String> LIBRARY_NAMES = List.of("libnuma.so.1", "libnuma.so");
 
     private final MethodHandle allocOnNode;
@@ -37,7 +40,7 @@ public final class NumaAllocator {
             FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
         maxNode = linker.downcallHandle(find(lib, "numa_max_node"), FunctionDescriptor.of(ValueLayout.JAVA_INT));
         movePages = linker.downcallHandle(find(lib, "numa_move_pages"),
-            FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG,
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG,
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
         final MethodHandle available = linker.downcallHandle(find(lib, "numa_available"), FunctionDescriptor.of(ValueLayout.JAVA_INT));
         try {
@@ -138,8 +141,9 @@ public final class NumaAllocator {
             final MemorySegment status = arena.allocate(4L * count, 4);
             for (int i = 0; i < count; i++) {
                 pages.setAtIndex(ValueLayout.JAVA_LONG, i, pageAddresses[i]);
+                status.setAtIndex(ValueLayout.JAVA_INT, i, UNSET); // an untouched entry must never read as node 0
             }
-            final long rc = (long) movePages.invokeExact(0, (long) count, pages, MemorySegment.NULL, status, 0);
+            final int rc = (int) movePages.invokeExact(0, (long) count, pages, MemorySegment.NULL, status, 0);
             if (rc < 0) {
                 throw new NumaAllocationException("numa_move_pages query failed, rc=" + rc);
             }

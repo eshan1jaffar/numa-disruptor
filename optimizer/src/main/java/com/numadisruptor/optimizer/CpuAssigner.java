@@ -22,20 +22,30 @@ final class CpuAssigner {
 
     record Result(Map<String, Integer> cpuByVertex, List<String> warnings) { }
 
-    /** Allowed, non-reserved CPUs of a node, ordered: first hardware thread of each core, then the siblings. */
+    /**
+     * Allowed, non-reserved CPUs of a node, ordered: first hardware thread of each core that holds no reserved cpu, then the
+     * siblings (omitted when SMT sharing is disallowed, which also excludes the sibling of a reserved cpu).
+     */
     static List<Integer> orderedPool(final NumaTopology topology, final PlacementConstraints constraints, final int node) {
         final BitSet reserved = constraints.reservedCpus();
         final List<Integer> firsts = new ArrayList<>();
         final List<Integer> siblings = new ArrayList<>();
         final Set<Long> seenCores = new HashSet<>();
+        final Set<Long> reservedCores = new HashSet<>(); // occupancy is judged over ALL allowed cpus, reserved ones included
+        for (final int cpu : topology.allowedCpusOnNode(node)) {
+            if (reserved.get(cpu)) {
+                reservedCores.add(topology.cpu(cpu).physicalCoreKey());
+            }
+        }
         for (final int cpu : topology.allowedCpusOnNode(node)) {
             if (reserved.get(cpu)) {
                 continue;
             }
-            if (seenCores.add(topology.cpu(cpu).physicalCoreKey())) {
+            final long core = topology.cpu(cpu).physicalCoreKey();
+            if (!reservedCores.contains(core) && seenCores.add(core)) {
                 firsts.add(cpu);
             } else {
-                siblings.add(cpu);
+                siblings.add(cpu); // second thread of a core, or the sibling of a reserved (busy) cpu
             }
         }
         final List<Integer> out = new ArrayList<>(firsts);

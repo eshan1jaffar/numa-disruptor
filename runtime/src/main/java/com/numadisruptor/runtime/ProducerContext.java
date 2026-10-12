@@ -28,6 +28,8 @@ public final class ProducerContext<E> {
 
     /** Single writer (the owning thread); volatile so the controller can read it after the thread ends. */
     private volatile long stalls;
+    private volatile long stallEpisodes;
+    private boolean inStall; // owning thread only: true while the previous claim attempt failed
     private volatile long published;
     private long publishedLocal;
 
@@ -54,9 +56,15 @@ public final class ProducerContext<E> {
     /** Claim one slot without waiting. Returns the sequence, or -1 when the ring is full (counted as a stall). */
     public long claim() {
         try {
-            return ring.tryNext();
+            final long seq = ring.tryNext();
+            inStall = false;
+            return seq;
         } catch (final InsufficientCapacityException full) {
             stalls = stalls + 1;
+            if (!inStall) {
+                inStall = true;
+                stallEpisodes = stallEpisodes + 1;
+            }
             return -1;
         }
     }
@@ -101,8 +109,14 @@ public final class ProducerContext<E> {
         return true;
     }
 
-    /** Number of failed claim attempts (ring full) so far. */
+    /**
+     * Number of failed claim attempts (ring full) so far. Because {@link #claimBlocking()} retries in a spin loop this measures
+     * spin time, not how often the producer was blocked; see {@link #stallEpisodes()} for the latter.
+     */
     public long stalls() { return stalls; }
+
+    /** Blocked episodes: runs of consecutive failed claims (each ended by a successful claim) counted once, not per spin. */
+    public long stallEpisodes() { return stallEpisodes; }
 
     /** Events published, exact once the task has finished; approximate (within 1024) while running. */
     public long publishedApprox() { return published; }

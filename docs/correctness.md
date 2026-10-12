@@ -41,4 +41,6 @@ both modes; ring sizes 8/64/512; two wait strategies) and 300 random optimizer i
   for sequencing, and tests *usage* invariants.
 * The stress tests run for seconds on a developer machine; they would not find a one-in-10^9 race. The hardware runs repeat the
   correctness checks inside every benchmark trial (conservation, order, payload integrity), which adds large volumes of events.
-* A `WORK_DISTRIBUTION` worker's `endOfBatch` flag is true only if its own last event is also the batch's last (documented).
+* A `WORK_DISTRIBUTION` worker sees its own batches: `endOfBatch` is true on its last own event of a ring batch, and `onBatchStart` is called (with the number of its own events) only for batches in which it owns at least one event. If the ring gave no `onBatchStart` for a batch, the ring's `endOfBatch` is passed through unchanged.
+* `ProducerContext.stalls()` / `Stats.producerStalls` count failed claim attempts, i.e. spin iterations while blocked, so they scale with time blocked; `stallEpisodes()` / `Stats.producerStallEpisodes` count how many times a producer entered the blocked state.
+* External `tryPublish` registers as in flight before checking the state; `stop()` flips the state, waits for in-flight publishers to leave (within the stop timeout) and only then drains, so every publish that returned true is consumed and later ones throw `IllegalStateException`.

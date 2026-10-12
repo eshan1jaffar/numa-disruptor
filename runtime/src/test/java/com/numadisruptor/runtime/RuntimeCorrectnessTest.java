@@ -158,6 +158,52 @@ class RuntimeCorrectnessTest {
     }
 
     @Test
+    void everyAcceptedExternalPublishIsConsumedEvenWhenStopRaces() throws Exception {
+        for (int round = 0; round < 20; round++) {
+            final java.util.concurrent.atomic.LongAdder consumed = new java.util.concurrent.atomic.LongAdder();
+            final NumaEventProcessor<SequencedEvent> p = NumaEventProcessor.<SequencedEvent>builder()
+                .eventFactory(SequencedEvent.factory(1))
+                .producersPerPartition(0)
+                .externalPublishers(true)
+                .ringBufferSize(64)
+                .placementPolicy(PlacementPolicy.NONE)
+                .consumers(1, ConsumptionMode.MULTICAST, (partition, i) -> (event, sequence, endOfBatch) -> consumed.increment())
+                .build();
+            p.start();
+            final int threads = 4;
+            final java.util.concurrent.atomic.LongAdder accepted = new java.util.concurrent.atomic.LongAdder();
+            final java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+            final Thread[] pubs = new Thread[threads];
+            for (int t = 0; t < threads; t++) {
+                pubs[t] = new Thread(() -> {
+                    try {
+                        go.await();
+                        while (true) {
+                            if (p.tryPublish(0, (event, sequence, arg) -> event.init(0, 0, arg, 0), 1L)) {
+                                accepted.increment();
+                            }
+                        }
+                    } catch (final IllegalStateException stopped) {
+                        // expected once stop() flips the state
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                pubs[t].start();
+            }
+            go.countDown();
+            Thread.sleep(2 + round % 5);
+            p.stop(Duration.ofSeconds(30));
+            for (final Thread t : pubs) {
+                t.join(10_000);
+            }
+            assertEquals(accepted.sum(), consumed.sum(), "round " + round + ": accepted publishes must all be consumed");
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> p.tryPublish(0, (event, sequence, arg) -> event.init(0, 0, arg, 0), 1L));
+        }
+    }
+
+    @Test
     void pinnedWorkersRunOnTheCpusInThePlan() throws Exception {
         final NumaTopology topology = NumaTopology.epyc7513DualSocket();
         final SimulatedCpuAffinity affinity = new SimulatedCpuAffinity(topology.allowedCpus());
@@ -264,6 +310,9 @@ class RuntimeCorrectnessTest {
         assertTrue(ms < 10_000, "stop must return near its timeout, took " + ms + "ms");
         assertTrue(e.getMessage().contains("did not"), e.getMessage());
         assertTrue(h.processor.stats().producerStalls() > 0);
+        final var st = h.processor.stats();
+        assertTrue(st.producerStallEpisodes() > 0 && st.producerStallEpisodes() < st.producerStalls(),
+            "episodes " + st.producerStallEpisodes() + " vs spins " + st.producerStalls());
     }
 
     @Test
