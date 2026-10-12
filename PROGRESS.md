@@ -24,7 +24,7 @@ is no evidence for or against the performance hypothesis.
 | CI workflow (portable build, analysis tests, optional Linux-native job) | written, **never run** (no remote yet) | `.github/workflows/ci.yml` |
 | Hardware-counter wrapper `scripts/hpc/perf-wrap.sh` (opt-in `PERF_WRAP=1`, whole-run scope) | done, **real perf untested** (WSL has no perf; fallback + stub-perf paths tested) | `analysis/test_parse_perf.py` |
 | Cost-model calibration tool (`bin/calibrate`, `CalibratedCostModel`) | done, **multi-node untested** (1-node run only) | `benchmarks/.../calibrate`, 4 tests |
-| Independent code review + fixes (15 findings; 13 acted on, incl. harness measurement-validity bugs) | done | see git log; regression tests added |
+| Independent code review + fixes (15 findings, all verified and fixed, incl. harness measurement-validity bugs) | done | see git log; regression tests added |
 | Experiments on the 2 x EPYC 7513 node | **not done** | needs a Slurm allocation |
 | Hardware remote-memory / coherence counters | **not collected** | harness records availability only; software proxies are labelled |
 | Calibration of the cost model coefficients | **not done** | defaults are priors; needs measured latencies |
@@ -58,7 +58,7 @@ thread left pinned under `--no-fork`, latency schedule started before the pipeli
 intended-send time, no processor stop on failure), a wrong `numa_move_pages` return type that could falsely confirm placement on node 0,
 an SMT-sharing validation gap, a publish/`stop()` race that could silently drop an accepted external event, and several script
 issues (smoke gate passing with all trials skipped, hard-coded time limit, deferred signal handling). All were verified and fixed with
-regression tests. Not acted on: a topology-key hardening was done; finding 15 nits were fixed; no finding was dismissed.
+regression tests.
 The earlier `docs/experimental-results.md` dev data predates these fixes (it used the old latency/driver behaviour), so treat it only as a
 harness smoke input.
 
