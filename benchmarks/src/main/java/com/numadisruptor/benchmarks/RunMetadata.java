@@ -18,10 +18,10 @@ import java.util.Properties;
 import java.util.TreeMap;
 
 /** Everything needed to reproduce or interpret a measurement: code version, machine, kernel, JVM, topology and job limits. */
-final class RunMetadata {
+public final class RunMetadata {
     private RunMetadata() { }
 
-    static Map<String, Object> collect(final NumaTopology topology) {
+    public static Map<String, Object> collect(final NumaTopology topology) {
         final Map<String, Object> m = new LinkedHashMap<>();
         m.put("timestamp", Instant.now().toString());
         m.put("gitCommit", gitCommit());
