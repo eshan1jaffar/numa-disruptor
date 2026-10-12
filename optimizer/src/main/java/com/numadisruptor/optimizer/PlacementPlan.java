@@ -113,6 +113,16 @@ public final class PlacementPlan {
                 }
             }
         }
+        if (!constraints.allowSmtSharing()) {
+            final Set<Long> busyCores = new HashSet<>();
+            topology.allowedCpus().stream().filter(c -> constraints.reservedCpus().get(c))
+                .forEach(c -> busyCores.add(topology.cpu(c).physicalCoreKey()));
+            for (final int cpu : new java.util.TreeSet<>(usedCpus)) {
+                if (topology.allowedCpus().get(cpu) && !busyCores.add(topology.cpu(cpu).physicalCoreKey())) {
+                    v.add("cpu " + cpu + " shares a physical core with another worker or a reserved cpu but SMT sharing is disallowed");
+                }
+            }
+        }
         for (final var e : cpuUse.entrySet()) {
             if (!usable.contains(e.getKey())) {
                 continue; // already reported

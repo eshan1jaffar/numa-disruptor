@@ -22,6 +22,15 @@ class NumaMemoryTest {
     Path tmp;
 
     @Test
+    void unsetPageStatusIsNeverCountedAsNodeZero() {
+        final Map<Integer, Long> byNode = new java.util.TreeMap<>();
+        final long unresolved = NumaMemoryVerifier.tally(new int[] {0, NumaAllocator.UNSET, -2, 1}, byNode);
+        assertEquals(2, unresolved);
+        assertEquals(Map.of(0, 1L, 1, 1L), byNode);
+        assertFalse(new NumaMemoryVerifier.Report(0, byNode, unresolved, 4).allOnExpectedNode());
+    }
+
+    @Test
     void missingLibraryIsReportedAsUnavailableNotCrash() {
         assertThrows(NumaUnavailableException.class, () -> NumaAllocator.open(List.of("libdefinitely-not-numa.so.9")));
         assertThrows(NumaUnavailableException.class, () -> NumaAllocator.open(List.of()));

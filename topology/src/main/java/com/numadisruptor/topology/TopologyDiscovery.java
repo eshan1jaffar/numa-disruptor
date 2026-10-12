@@ -107,6 +107,7 @@ public final class TopologyDiscovery {
 
         // --- distances (columns are the online nodes in ascending order) ---
         final int[][] dist = new int[nodeIds.size()][nodeIds.size()];
+        boolean distancesGuessed = false;
         for (int r = 0; r < nodeIds.size(); r++) {
             final Path f = nodeDir.resolve("node" + nodeIds.get(r)).resolve("distance");
             final String[] cols = Files.isRegularFile(f) ? readTrim(f).split("\\s+") : new String[0];
@@ -115,6 +116,7 @@ public final class TopologyDiscovery {
                     dist[r][c] = Integer.parseInt(cols[c]);
                 } else {
                     dist[r][c] = r == c ? 10 : 20; // unknown: neutral remote distance
+                    distancesGuessed |= nodeIds.size() > 1;
                 }
             }
         }
@@ -164,7 +166,7 @@ public final class TopologyDiscovery {
         final String cgroupCpuMax = cgroupCpuMaxFile != null && Files.isRegularFile(cgroupCpuMaxFile)
             ? readTrim(cgroupCpuMaxFile) : null;
 
-        return new NumaTopology(NumaTopology.Source.LINUX_SYSFS, nodeList, cpuList, dist, allowedCpus, allowedNodes, cgroupCpuMax);
+        return new NumaTopology(NumaTopology.Source.LINUX_SYSFS, nodeList, cpuList, dist, allowedCpus, allowedNodes, cgroupCpuMax, distancesGuessed);
     }
 
     private static int ownerNode(final TreeMap<Integer, BitSet> nodeCpus, final int cpu) {

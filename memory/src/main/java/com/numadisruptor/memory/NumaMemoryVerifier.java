@@ -69,7 +69,7 @@ public final class NumaMemoryVerifier {
         return new Report(region.node(), byNode, unmapped, inspected);
     }
 
-    private static long tally(final int[] status, final Map<Integer, Long> byNode) {
+    static long tally(final int[] status, final Map<Integer, Long> byNode) {
         long unmapped = 0;
         for (final int s : status) {
             if (s >= 0) {

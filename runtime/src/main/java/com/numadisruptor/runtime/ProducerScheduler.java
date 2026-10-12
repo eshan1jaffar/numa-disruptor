@@ -111,6 +111,14 @@ final class ProducerScheduler<E> {
         return s;
     }
 
+    long totalStallEpisodes() {
+        long s = 0;
+        for (final ProducerContext<E> c : contexts) {
+            s += c.stallEpisodes();
+        }
+        return s;
+    }
+
     long totalPublished() {
         long s = 0;
         for (final ProducerContext<E> c : contexts) {

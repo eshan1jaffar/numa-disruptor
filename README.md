@@ -67,7 +67,7 @@ NumaEventProcessor<SequencedEvent> processor = NumaEventProcessor.<SequencedEven
 
 processor.start(ctx -> {                             // ProducerTask: runs once on each pinned producer thread
     for (long seq = 0; ctx.isRunning(); seq++) {
-        long slot = ctx.claimBlocking();             // -1 when stopping; spins (counted as stalls) when the ring is full
+        long slot = ctx.claimBlocking();             // -1 when stopping; spins (counted in stalls, once per blocked episode in stallEpisodes) when the ring is full
         if (slot < 0) return;
         ctx.event(slot).init(ctx.partition(), ctx.producerId(), seq, System.nanoTime());
         ctx.publish(slot);                           // always publish what you claimed

@@ -28,6 +28,7 @@ public final class NumaTopology {
     private final BitSet allowedCpus;
     private final BitSet allowedNodes;
     private final String cgroupCpuMax;
+    private final boolean distancesGuessed;
 
     public NumaTopology(
         final Source source,
@@ -37,6 +38,20 @@ public final class NumaTopology {
         final BitSet allowedCpus,
         final BitSet allowedNodes,
         final String cgroupCpuMax) {
+        this(source, nodeList, cpuList, distanceMatrix, allowedCpus, allowedNodes, cgroupCpuMax, false);
+    }
+
+    /** @param distancesGuessed true when the distance matrix is a 10/20 placeholder because sysfs data was missing or malformed */
+    public NumaTopology(
+        final Source source,
+        final List<NumaNode> nodeList,
+        final List<CpuTopology> cpuList,
+        final int[][] distanceMatrix,
+        final BitSet allowedCpus,
+        final BitSet allowedNodes,
+        final String cgroupCpuMax,
+        final boolean distancesGuessed) {
+        this.distancesGuessed = distancesGuessed;
         this.source = source;
         final Map<Integer, NumaNode> n = new TreeMap<>();
         nodeList.forEach(x -> n.put(x.id(), x));
@@ -135,10 +150,13 @@ public final class NumaTopology {
         cpuMask.stream().forEach(c -> nodeMask.set(cpus.get(c).nodeId()));
         nodeMask.and(allowedNodes);
         return new NumaTopology(
-            source, List.copyOf(nodes.values()), List.copyOf(cpus.values()), distances, cpuMask, nodeMask, cgroupCpuMax);
+            source, List.copyOf(nodes.values()), List.copyOf(cpus.values()), distances, cpuMask, nodeMask, cgroupCpuMax, distancesGuessed);
     }
 
     public Source source() { return source; }
+
+    /** True if distances are a 10/20 placeholder (sysfs distance file missing or with the wrong column count). */
+    public boolean distancesGuessed() { return distancesGuessed; }
 
     public List<NumaNode> nodes() { return List.copyOf(nodes.values()); }
 
@@ -235,6 +253,9 @@ public final class NumaTopology {
                 sb.append(distance(n.id(), other)).append(' ');
             }
             sb.append('\n');
+        }
+        if (distancesGuessed) {
+            sb.append("  WARNING distances: guessed (sysfs distance data missing or malformed)\n");
         }
         if (cgroupCpuMax != null) {
             sb.append("  cgroup cpu.max=").append(cgroupCpuMax).append('\n');
