@@ -73,10 +73,12 @@ final class PlacementFactory {
         switch (c.locality) {
             case SAME_NODE -> {
                 final int need = workersPerPartition * spec.partitions();
-                final int node = usable.stream().filter(n -> topology.allowedCpusOnNode(n).size() >= need).findFirst()
+                final java.util.function.ToIntFunction<Integer> free = n -> (int) topology.allowedCpusOnNode(n).stream()
+                    .filter(cpu -> !constraints.reservedCpus().get(cpu)).count(); // the driver CPU is not available to workers
+                final int node = usable.stream().filter(n -> free.applyAsInt(n) >= need).findFirst()
                     .orElseThrow(() -> new UnsupportedScenarioException(
                         "SAME_NODE needs " + need + " cpus on one node; the largest allowed node has "
-                            + usable.stream().mapToInt(n -> topology.allowedCpusOnNode(n).size()).max().orElse(0)));
+                            + usable.stream().mapToInt(free).max().orElse(0)));
                 java.util.Arrays.fill(producerNode, node);
                 java.util.Arrays.fill(consumerNode, node);
             }

@@ -104,10 +104,11 @@ final class TradingWorkload {
             final PayloadSlab slab = slabs == null ? null : slabs[ctx.partition()];
             final int pid = ctx.producerId();
             long seq = 0;
+            final long origin = intervalNs > 0 ? ctl.origin() : 0;
             while (!ctl.stop && seq < ctl.limitPerProducer) {
                 long intended = 0;
                 if (intervalNs > 0) {
-                    intended = ctl.originNanos + (long) (seq * intervalNs);
+                    intended = origin + (long) (seq * intervalNs);
                     while (System.nanoTime() < intended) {
                         if (ctl.stop) {
                             publishedOut[pid] = seq;
@@ -285,9 +286,14 @@ final class TradingWorkload {
             } else {
                 outOfOrder++;
             }
-            if (recording && countsUniqueEvents) {
-                measured++;
-                if (latency && e.intendedNanos != 0) {
+            if (countsUniqueEvents) {
+                // throughput: counted by the phase in which the batch is delivered
+                if (recording) {
+                    measured++;
+                }
+                // latency: selected by the intended send time lying in the window, so late deliveries of in-window sends are
+                // kept and warm-up backlog delivered early in the window is not
+                if (latency && e.intendedNanos >= ctl.windowStartNanos && e.intendedNanos < ctl.windowEndNanos) {
                     final long d = System.nanoTime() - e.intendedNanos;
                     histogram.recordValue(d < 0 ? 0 : d);
                 }
