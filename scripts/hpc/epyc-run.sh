@@ -56,7 +56,7 @@ ensure_jdk() {
   offline && die "no JDK 25 staged in $JDK_DIR and NUMA_OFFLINE=1"
   local arch; case "$(uname -m)" in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=aarch64 ;; *) die "unsupported CPU $(uname -m)" ;; esac
   local base="https://api.adoptium.net/v3"
-  local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  local tmp; tmp="$(mktemp -d)"
   log "downloading Temurin JDK 25 ($arch) from Adoptium"
   fetch "$base/assets/latest/25/hotspot?architecture=$arch&image_type=jdk&os=linux&vendor=eclipse" "$tmp/assets.json"
   local sum; sum="$(grep -o '"checksum"[[:space:]]*:[[:space:]]*"[0-9a-f]\{64\}"' "$tmp/assets.json" | head -1 | grep -o '[0-9a-f]\{64\}')"
@@ -65,6 +65,7 @@ ensure_jdk() {
   [[ "$(sha256sum "$tmp/jdk.tar.gz" | cut -d' ' -f1)" == "$sum" ]] || die "JDK checksum mismatch (expected $sum)"
   rm -rf "$JDK_DIR"; mkdir -p "$JDK_DIR"
   tar -xzf "$tmp/jdk.tar.gz" -C "$JDK_DIR" --strip-components=1
+  rm -rf "$tmp"
   export JAVA_HOME="$JDK_DIR"
   log "installed $("$JAVA_HOME/bin/java" -version 2>&1 | head -1)"
 }
