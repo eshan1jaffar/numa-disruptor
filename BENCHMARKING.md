@@ -76,6 +76,31 @@ first touched. `--no-fork` runs trials inside the launching JVM (faster, less in
 
 JMH: `java -cp 'benchmarks/build/install/benchmarks/lib/*' org.openjdk.jmh.Main SequencerClaimBenchmark PlacementOptimizerBenchmark`.
 
+## Calibrating the cost model
+
+`PlacementCostModel.fromLatencyMatrix` takes a measured node-to-node latency matrix; `CalibrationMain` produces it. For every ordered
+pair of usable nodes (a, b) it allocates a 256 MiB buffer bound to node b (prefaulted, residency verified with `NumaMemoryVerifier`),
+chases a random single-cycle cache-line permutation from a thread pinned to an allowed CPU of node a (median/min/max ns per dependent
+load over 7 reps), and ping-pongs a volatile counter between a pinned thread on a and one on b (median round-trip ns; same-node
+entries use two distinct CPUs). Pairs it cannot measure (no allowed CPU, <2 CPUs for same-node ping-pong, allocation failure,
+residency mismatch, pinning failure) are `null` in the matrices and listed with a reason under `invalid`.
+
+```bash
+./gradlew :benchmarks:installDist
+benchmarks/build/install/benchmarks/bin/calibrate --out latency.json          # same as:
+java --enable-native-access=ALL-UNNAMED -cp 'benchmarks/build/install/benchmarks/lib/*' \
+    com.numadisruptor.benchmarks.calibrate.CalibrationMain --out latency.json
+```
+Options: `--size-mib 256 --reps 7 --loads 2000000 --pingpong-rounds 200000 --seed 42`. Exit codes: 0 ok, 1 bad arguments or write
+failure, 2 libnuma or thread pinning unavailable (clear message, no stack trace). Run it inside the same allocation/cpuset as the
+benchmark, not on a login node. In code: `CalibratedCostModel.load(Path.of("latency.json"), coefficients[, expectedNodeIds])`
+rejects null/NaN/non-positive entries, wrong shapes, duplicate ids and a node set differing from the expected one.
+
+Caveats: latency includes TLB misses (4 KiB pages unless THP applies); `pingPongNs` is recorded but the model currently consumes only
+`latencyNs`. Verified on a 1-node, 16-CPU WSL machine only, where the matrix is a single entry (local latency) and no remote
+behaviour is exercised. The multi-node paths (residency check across nodes, cross-node pinning, ping-pong between nodes) are
+unverified until run on the cluster.
+
 ## Running on the cluster
 
 Prerequisites: a JDK 25 reachable on the compute node (`module load …` or `JAVA_HOME`). Nothing else, no network.

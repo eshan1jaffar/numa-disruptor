@@ -22,3 +22,13 @@ tasks.processResources {
     inputs.property("gitCommit", gitCommit)
     filesMatching("build-info.properties") { expand("gitCommit" to gitCommit.get().ifEmpty { "unknown" }, "version" to project.version) }
 }
+
+// bin/calibrate: node-to-node latency / ping-pong calibration (see BENCHMARKING.md, "Calibrating the cost model").
+val calibrateScripts = tasks.register<CreateStartScripts>("calibrateScripts") {
+    applicationName = "calibrate"
+    mainClass = "com.numadisruptor.benchmarks.calibrate.CalibrationMain"
+    classpath = tasks.startScripts.get().classpath
+    outputDir = layout.buildDirectory.dir("calibrate-scripts").get().asFile
+    defaultJvmOpts = listOf("--enable-native-access=ALL-UNNAMED")
+}
+distributions.main { contents { into("bin") { from(calibrateScripts) } } }

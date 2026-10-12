@@ -4,10 +4,10 @@ import java.util.Iterator;
 import java.util.Map;
 
 /** Minimal JSON writer for result records (maps, lists, strings, numbers, booleans, null). No parsing, no dependency. */
-final class MiniJson {
+public final class MiniJson {
     private MiniJson() { }
 
-    static String write(final Object value) {
+    public static String write(final Object value) {
         final StringBuilder sb = new StringBuilder(256);
         write(value, sb);
         return sb.toString();
@@ -89,7 +89,7 @@ final class MiniJson {
     }
 
     /** Parses one JSON object (as produced by {@link #write}) into nested LinkedHashMap/ArrayList/Long/Double/String/Boolean/null. */
-    static java.util.Map<String, Object> parseObject(final String json) {
+    public static java.util.Map<String, Object> parseObject(final String json) {
         final Parser p = new Parser(json);
         final Object v = p.value();
         p.skipWs();
